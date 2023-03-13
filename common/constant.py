@@ -17,7 +17,8 @@ FILE_SUCCESS = 'success.txt'
 FILE_AUDIO = 'audio.txt'
 FILE_KEYWORDS_BY_SOURCE = 'keywords_by_source.json'
 FILE_KEYWORDS_BY_DOC = 'keywords_by_doc.json'
-
+DIR_WORDCLOUD = 'wordcloud'
+DIR_CONTEXT = 'context'
 SIZE = 10
 
 NEW_COL_LEMMA_TEXT = '内容lemma后纯文本'

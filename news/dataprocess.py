@@ -5,16 +5,19 @@ from common import constant
 from excel import Excel
 from common import utils
 import matplotlib.pyplot as plot
-from wordcloud import WordCloud
+from wordcloud import WordCloud, STOPWORDS as WC_STOPWORDS
 # from gensim import corpora, models
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import MiniBatchKMeans
 from sklearn.decomposition import LatentDirichletAllocation
 
-
 # 处理plt中文显示问题
 plot.rcParams["font.sans-serif"] = ["SimHei"]  # 正常显示中文标签
 plot.rcParams["axes.unicode_minus"] = False  # 解决负号显示为方块的问题
+
+TFIDF_STOPWORDS = ['bbc', 'tokyo', 'olympic', 'olympics', 'cambage', '2020',
+                   'brisbane', 'watch', 'coverage', 'app', 'iplayer', 'website']
+
 
 # 2021年7月23日开幕、8月8日闭幕
 # 数据时间：'2021-07-16 00:00:0', '2021-08-09 00:00:0'
@@ -26,11 +29,21 @@ class DataAnalysis:
         self.tfidf_X = None
         self.lda = None
 
-    def generate_word_cloud(self, source_file_dir, source_filename, saved_file_path, news_source=None):
+    def generate_word_cloud(self, source_file_dir, source_filename, saved_file_path, news_source=None,
+                            start_date=None, end_date=None):
         df = self.excel_obj.read_excel(source_file_dir, source_filename)
         if news_source is not None:
             df = df[df['媒体'] == news_source]
-        text = ' '.join(content for content in df[constant.NEW_COL_LEMMA_TEXT])
+        if start_date is not None and end_date is not None:
+            df = df[(start_date <= df['发布时间']) & (df['发布时间'] < end_date)]
+        # text = ' '.join(content for content in df[constant.NEW_COL_LEMMA_TEXT])
+        docs = [content for content in df[constant.NEW_COL_LEMMA_TEXT]]
+        vectorizer = TfidfVectorizer(stop_words=TFIDF_STOPWORDS)
+        vecs = vectorizer.fit_transform(docs)
+        feature_names = vectorizer.get_feature_names()
+        dense = vecs.todense()
+        lst1 = dense.tolist()
+        df_tfidf = pd.DataFrame(lst1, columns=feature_names)
         # Generate word cloud
         word_cloud = WordCloud(
             width=3000,
@@ -39,11 +52,31 @@ class DataAnalysis:
             background_color="white",
             # colormap="Pastel1",
             collocations=False,
-        ).generate(text)
+            max_words=200,
+        ).generate_from_frequencies(df_tfidf.T.sum(axis=1))
         plot.imshow(word_cloud)
         plot.axis('off')
         # plot.show()
         word_cloud.to_file(saved_file_path)
+
+    def generate_word_cloud_by_date(self, source_file_dir, source_filename, news_source=None):
+        start_date = '2021-7-16 00:00:0'
+        stop_date = '2021-8-9 00:00:0'
+        dest_filename0 = 'wc'
+        if news_source is not None:
+            dest_filename0 += '_' + news_source
+        while True:
+            print(start_date)
+            dest_filename = dest_filename0 + '_' + start_date.split(' ')[0] + '.png'
+            next_date = utils.next_day(start_date)
+            self.generate_word_cloud(source_file_dir, source_filename,
+                                     os.path.join(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED,
+                                                               constant.DIR_WORDCLOUD),
+                                                  dest_filename), news_source=news_source,
+                                     start_date=start_date, end_date=next_date)
+            if next_date == stop_date:
+                break
+            start_date = next_date
 
     def total_word_count(self, source_file_dir, source_filename):
         df = self.excel_obj.read_excel(source_file_dir, source_filename)
@@ -86,7 +119,7 @@ class DataAnalysis:
         if start_date is not None and end_date is not None:
             df = df[(start_date <= df['发布时间']) & (df['发布时间'] < end_date)]
         docs = [content for content in df[constant.NEW_COL_LEMMA_TEXT]]
-        self.tfidf_vectorizer = TfidfVectorizer()
+        self.tfidf_vectorizer = TfidfVectorizer(stop_words=TFIDF_STOPWORDS)
         self.tfidf_X = self.tfidf_vectorizer.fit_transform(docs)
         data = {
             'word': self.tfidf_vectorizer.get_feature_names(),
@@ -108,7 +141,7 @@ class DataAnalysis:
             X, tfidf_df = self.tf_idf(source_file_dir, source_filename, news_source=news_source,
                                       start_date=start_date, end_date=next_date)
             tfidf_df.to_excel(os.path.join(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED),
-                                   dest_filename), index=True)
+                                           dest_filename), index=True)
             if next_date == stop_date:
                 break
             start_date = next_date
@@ -116,7 +149,7 @@ class DataAnalysis:
     def clustering_kmeans(self, data, k):
         kmeans = MiniBatchKMeans(n_clusters=k, batch_size=20000, random_state=0)
         y_means = kmeans.fit_predict(data)
-        print(y_means)
+        return y_means
 
     '''
         LDA model 对于本次数据源不适用
@@ -153,23 +186,29 @@ class DataAnalysis:
     find the context of the keyword
     '''
 
-    def context_by_keyword(self, source_file_dir, source_filename, keyword, context_length=10,
-                           news_source=None, allocation=None):
+    def context_by_keyword(self, source_file_dir, source_filename, keyword, dest_file_dir, context_length=10,
+                           news_source=None, allocation=None, start_date=None, end_date=None):
         df = self.excel_obj.read_excel(source_file_dir, source_filename)
-        dest_filename = keyword + '_all.csv'
+        dest_filename = keyword
+        if allocation is not None:
+            dest_filename = keyword + '_' + "_".join(allocation)
         if news_source is not None:
             df = df[df['媒体'] == news_source]
-            if allocation is None:
-                dest_filename = keyword + '_' + news_source + '.csv'
-            else:
-                dest_filename = keyword + '_' + "_".join(allocation) + "_" + news_source + '.csv'
+            dest_filename += '_' + news_source
+        if start_date is not None and end_date is not None:
+            df = df[(start_date <= df['发布时间']) & (df['发布时间'] < end_date)]
+            dest_filename += '_' + start_date.split(' ')[0] + '_' + end_date.split(' ')[0]
+        dest_filename += '.xlsx'
         docs_keyword_contexts = {}
+        doc_keyword_context_ids = []
+        doc_keyword_context_dates = []
+        doc_keyword_context_content = []
         for idx, row in df.iterrows():
             content = row[constant.NEW_COL_LEMMA_TEXT]
             id = row[constant.COL_ID]
+            publish_date = row['发布日期']
             tokens = content.split(' ')
             # print('doc####', id)
-            doc_keyword_contexts = []
             for i, token in enumerate(tokens):
                 token = token.strip()
                 if keyword in token:
@@ -184,7 +223,9 @@ class DataAnalysis:
                         if j > suf_i:
                             break
                     if allocation is None:
-                        doc_keyword_contexts.append(keyword_context.strip())
+                        doc_keyword_context_ids.append(id)
+                        doc_keyword_context_dates.append(publish_date)
+                        doc_keyword_context_content.append(keyword_context.strip())
                     else:
                         all_allocation_is_in = True
                         for alloc in allocation:
@@ -192,14 +233,14 @@ class DataAnalysis:
                                 all_allocation_is_in = False
                                 break
                         if all_allocation_is_in:
-                            doc_keyword_contexts.append(keyword_context.strip())
-            if len(doc_keyword_contexts) > 0:
-                docs_keyword_contexts[id] = doc_keyword_contexts
-        lines = []
-        lines.append('文档序号,语境')
-        for k, v in docs_keyword_contexts.items():
-            lines.append(str(k) + ',' + ','.join(v))
-        file.write_lines_to_file(source_file_dir, dest_filename, lines, 'w')
+                            doc_keyword_context_ids.append(id)
+                            doc_keyword_context_dates.append(publish_date)
+                            doc_keyword_context_content.append(keyword_context.strip())
+        docs_keyword_contexts['文档序号'] = doc_keyword_context_ids
+        docs_keyword_contexts['语境'] = doc_keyword_context_content
+        docs_keyword_contexts['发布日期'] = doc_keyword_context_dates
+        context_df = pd.DataFrame(docs_keyword_contexts, columns=['文档序号', '语境', '发布日期'])
+        context_df.to_excel(os.path.join(dest_file_dir, dest_filename), index=False)
 
     def time_to_date(self, source_file_dir, source_filename, dest_file_dir, dest_filename):
         df = self.excel_obj.read_excel(source_file_dir, source_filename)
@@ -217,19 +258,20 @@ class DataAnalysis:
         plot.show()
 
 
-
 # DataAnalysis().get_news_count_by_date(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED),
 #                                   'news_token_lemma-0716-0808.xlsx')
 
 
 # contexts
-# DataAnalysis().context_by_keyword(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED),
-#                                    'news_token_lemma.xlsx', 'covid', 5,
-#                                   news_source=constant.SOURCE_CNN, allocation=['case'])
+DataAnalysis().context_by_keyword(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED),
+                                   'news_token_lemma-0716-0808.xlsx', 'covid',
+                                  os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_CONTEXT), 10,
+                                  news_source=None, allocation=None,
+                                  start_date='2021-7-16 00:00:0', end_date='2021-7-21 00:00:0')
 # tf idf  && kmeans
 # dataAnalysis = DataAnalysis()
 # X, tfidf_df = dataAnalysis.tf_idf(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED),
-#                                   'news_token_lemma-0716-0808.xlsx', news_source=constant.SOURCE_CNN)
+#                                   'news_token_lemma-0716-0808.xlsx', news_source=None)
 # tfidf_df.to_excel(os.path.join(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED),
 #                                'tfidf_' + constant.SOURCE_BBC + '.xlsx'), index=True)
 
@@ -240,7 +282,9 @@ class DataAnalysis:
 
 # lda = dataAnalysis.lda_model(2)
 # dataAnalysis.print_lda_top_words(lda, dataAnalysis.tfidf_vectorizer.get_feature_names(), 20)
-# DataAnalysis().clustering_kmeans(X, 3)
+# y_means = dataAnalysis.clustering_kmeans(X, 3)
+# print(len(y_means))
+# print(len(tfidf_df))
 
 # print(DataPreprocess().nlp.Defaults.stop_words)
 
@@ -254,6 +298,12 @@ class DataAnalysis:
 #             os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, 'wc_all.png')
 #                                    # , news_source='abc'
 #                                    )
+
+# generate word cloud by date
+# DataAnalysis().generate_word_cloud_by_date(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED),
+#                                            'news_token_lemma-0716-0808.xlsx'
+#                                            , news_source=None
+#                                            )
 
 # DataAnalysis().time_to_date(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED),
 #                               'news_token_lemma-0716-0808.xlsx', os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED),
