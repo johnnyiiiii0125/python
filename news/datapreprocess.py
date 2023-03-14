@@ -5,6 +5,7 @@ import spacy
 from common import constant
 from spacy.lang.en.stop_words import STOP_WORDS
 
+
 class DataPreprocess:
     def __init__(self):
         self.excel_obj = Excel()
@@ -65,7 +66,8 @@ class DataPreprocess:
             df.loc[idx, new_col] = ' '.join(tokens)
         df.to_excel(os.path.join(dest_file_dir, dest_filename), index=False)
 
-    def token_stopwords_lemma_spacy(self, source_file_dir, source_filename, dest_file_dir, dest_filename):
+    def token_stopwords_lemma_spacy(self, source_file_dir, source_filename, dest_file_dir, dest_filename,
+                                    remove_punct=True):
         df = self.excel_obj.read_excel(source_file_dir, source_filename)
         new_col = constant.NEW_COL_LEMMA_TEXT
         df[new_col] = ''
@@ -75,15 +77,16 @@ class DataPreprocess:
             doc = self.nlp(content)
             doc_remain = []
             for token in doc:
-                if not token.is_stop:
-                    # 非stop words，
-                    if not token.is_punct:
-                        # remove punctuation
-                        txt = token.lemma_.strip().lower()
-                        # make sure the lemma is not a stop word
-                        if txt not in STOP_WORDS:
-                            if txt != '':
-                                doc_remain.append(txt)
+                if token.is_stop:
+                    continue
+                # 非stop words，
+                if remove_punct and token.is_punct:
+                    continue
+                txt = token.lemma_.strip().lower()
+                # make sure the lemma is not a stop word
+                if txt not in STOP_WORDS:
+                    if txt != '':
+                        doc_remain.append(txt)
             df.loc[idx, new_col] = ' '.join(doc_remain)
         df.to_excel(os.path.join(dest_file_dir, dest_filename), index=False)
 
@@ -213,3 +216,9 @@ class DataPreprocess:
                 word_counts_pos = sorted_in_pos[pos]
                 sorted_in_pos[pos] = sorted(word_counts_pos.items(), key=lambda x: x[1], reverse=True)[:top]
             return sorted_in_pos
+
+
+DataPreprocess().token_stopwords_lemma_spacy(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED),
+                                             'news_token_lemma-0716-0808.xlsx',
+                                             os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED),
+                                             'news_token_lemma-0716-0808.xlsx', remove_punct=False)

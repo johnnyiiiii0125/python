@@ -10,6 +10,9 @@ from wordcloud import WordCloud, STOPWORDS as WC_STOPWORDS
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import MiniBatchKMeans
 from sklearn.decomposition import LatentDirichletAllocation
+from pattern.text.en import sentiment
+import seaborn as sns
+from textblob import TextBlob
 
 # 处理plt中文显示问题
 plot.rcParams["font.sans-serif"] = ["SimHei"]  # 正常显示中文标签
@@ -242,6 +245,58 @@ class DataAnalysis:
         context_df = pd.DataFrame(docs_keyword_contexts, columns=['文档序号', '语境', '发布日期'])
         context_df.to_excel(os.path.join(dest_file_dir, dest_filename), index=False)
 
+    def lines_of_keyword(self, source_file_dir, source_filename, keyword, dest_file_dir, line_length=1,
+                         news_source=None, allocation=None, start_date=None, end_date=None):
+        df = self.excel_obj.read_excel(source_file_dir, source_filename)
+        dest_filename = keyword
+        if allocation is not None:
+            dest_filename = keyword + '_' + "_".join(allocation)
+        if news_source is not None:
+            df = df[df['媒体'] == news_source]
+            dest_filename += '_' + news_source
+        if start_date is not None and end_date is not None:
+            df = df[(start_date <= df['发布时间']) & (df['发布时间'] < end_date)]
+            dest_filename += '_' + start_date.split(' ')[0] + '_' + end_date.split(' ')[0]
+        dest_filename += '.xlsx'
+        docs_keyword_contexts = {}
+        doc_keyword_context_ids = []
+        doc_keyword_context_dates = []
+        doc_keyword_context_content = []
+        for idx, row in df.iterrows():
+            content = row[constant.NEW_COL_LEMMA_TEXT]
+            id = row[constant.COL_ID]
+            publish_date = row['发布日期']
+            lines = content.split('.')
+            print('doc####', id)
+            for i, line in enumerate(lines):
+                line = line.strip()
+                context_lines = []
+                if keyword in line:
+                    pre_i = i - line_length
+                    if pre_i < 0:
+                        pre_i = 0
+                    suf_i = i + line_length
+                    all_allocation_is_in = True
+                    if allocation is not None:
+                        for alloc in allocation:
+                            if alloc not in line.strip():
+                                all_allocation_is_in = False
+                                break
+                    if all_allocation_is_in:
+                        for j, line2 in enumerate(lines):
+                            if pre_i <= j <= suf_i:
+                                context_lines.append(line2.strip())
+                            if j > suf_i:
+                                break
+                        doc_keyword_context_ids.append(id)
+                        doc_keyword_context_dates.append(publish_date)
+                        doc_keyword_context_content.append(".".join(context_lines))
+        docs_keyword_contexts['文档序号'] = doc_keyword_context_ids
+        docs_keyword_contexts['语境'] = doc_keyword_context_content
+        docs_keyword_contexts['发布日期'] = doc_keyword_context_dates
+        context_df = pd.DataFrame(docs_keyword_contexts, columns=['文档序号', '语境', '发布日期'])
+        context_df.to_excel(os.path.join(dest_file_dir, dest_filename), index=False)
+
     def time_to_date(self, source_file_dir, source_filename, dest_file_dir, dest_filename):
         df = self.excel_obj.read_excel(source_file_dir, source_filename)
         df['发布日期'] = df['发布时间'].dt.date
@@ -257,17 +312,82 @@ class DataAnalysis:
         plot.grid()
         plot.show()
 
+    def sentiment_analysis_by_pattern(self, source_file_dir, source_filename, dest_file_dir, dest_filename):
+        df = self.excel_obj.read_excel(source_file_dir, source_filename)
+        df['极性'] = 0
+        df['主观性'] = 0
+        for idx, row in df.iterrows():
+            context = row['语境']
+            id = row['文档序号']
+            result = sentiment(context)
+            df.loc[idx, '极性'] = result[0]
+            df.loc[idx, '主观性'] = result[1]
+        df.to_excel(os.path.join(dest_file_dir, dest_filename), index=False)
+
+    def sentiment_analysis_by_textblob(self, source_file_dir, source_filename, dest_file_dir, dest_filename):
+        df = self.excel_obj.read_excel(source_file_dir, source_filename)
+        df['极性'] = 0
+        df['主观性'] = 0
+        df['立场'] = ''
+        for idx, row in df.iterrows():
+            context = row['语境']
+            result = TextBlob(context)
+            df.loc[idx, '极性'] = result.sentiment.polarity
+            df.loc[idx, '主观性'] = result.sentiment.subjectivity
+        df.loc[df['极性'] > 0, '立场'] = 'Positive'
+        df.loc[df['极性'] < 0, '立场'] = 'Negative'
+        df.loc[df['极性'] == 0, '立场'] = 'Neutral'
+        df.to_excel(os.path.join(dest_file_dir, dest_filename), index=False)
+
+    def plot_sentiment_result(self, source_file_dir, source_filename, dest_file_dir=None, dest_filename=None,
+                              label='极性'):
+        df = self.excel_obj.read_excel(source_file_dir, source_filename)
+        # sns.displot(df["立场"], height=5, aspect=1.8)
+        # df.groupby('立场').count().plot(kind='pie', y='立场', autopct='%1.0f%%')
+        plot.pie(x=df['立场'].value_counts(), labels=df['立场'].value_counts().index, autopct='%1.0f%%')
+        plot.title(label)
+        plot.savefig(os.path.join(dest_file_dir, dest_filename))
+
+
+# plot sentiment
+DataAnalysis().plot_sentiment_result(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
+                                     'covid_2021-7-16_2021-7-21_textblob_sentiment.xlsx',
+                                     os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
+                                     'covid_textblob_pie.png',
+                                     label='7月16日-20日三大媒体对新冠肺炎的情感态度'
+                                     )
+# DataAnalysis().plot_sentiment_result(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
+#                                      'ceremony_2021-7-22_2021-7-24_textblob_sentiment.xlsx',
+#                                       os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
+#                                      'ceremony_textblob_pie.png',
+#                                      label='7月22日-23日三大媒体对开幕式的情感态度'
+#                                      )
+# sentiment analysis
+# DataAnalysis().sentiment_analysis_by_pattern(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_CONTEXT),
+#                                   'ceremony_2021-7-22_2021-7-24.xlsx',
+#                                   os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_CONTEXT),
+#                                   'ceremony_2021-7-22_2021-7-24_sentiment.xlsx')
+
+# DataAnalysis().sentiment_analysis_by_textblob(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_CONTEXT),
+#                                   'covid_2021-7-16_2021-7-21.xlsx',
+#                                   os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
+#                                   'covid_2021-7-16_2021-7-21_textblob_sentiment.xlsx')
 
 # DataAnalysis().get_news_count_by_date(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED),
 #                                   'news_token_lemma-0716-0808.xlsx')
 
 
 # contexts
-DataAnalysis().context_by_keyword(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED),
-                                   'news_token_lemma-0716-0808.xlsx', 'covid',
-                                  os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_CONTEXT), 10,
-                                  news_source=None, allocation=None,
-                                  start_date='2021-7-16 00:00:0', end_date='2021-7-21 00:00:0')
+# DataAnalysis().context_by_keyword(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED),
+#                                    'news_token_lemma-0716-0808.xlsx', 'covid',
+#                                   os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_CONTEXT), 10,
+#                                   news_source=None, allocation=None,
+#                                   start_date='2021-7-16 00:00:0', end_date='2021-7-21 00:00:0')
+# DataAnalysis().lines_of_keyword(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED),
+#                                 'news_token_lemma-0716-0808.xlsx', 'ceremony',
+#                                 os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_CONTEXT), 1,
+#                                 news_source=None, allocation=None,
+#                                 start_date='2021-7-22 00:00:0', end_date='2021-7-24 00:00:0')
 # tf idf  && kmeans
 # dataAnalysis = DataAnalysis()
 # X, tfidf_df = dataAnalysis.tf_idf(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED),
