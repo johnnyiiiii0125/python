@@ -13,6 +13,8 @@ from sklearn.decomposition import LatentDirichletAllocation
 from pattern.text.en import sentiment
 import seaborn as sns
 from textblob import TextBlob
+from textblob.sentiments import NaiveBayesAnalyzer
+import spacy
 
 # 处理plt中文显示问题
 plot.rcParams["font.sans-serif"] = ["SimHei"]  # 正常显示中文标签
@@ -31,6 +33,7 @@ class DataAnalysis:
         self.tfidf_vectorizer = None
         self.tfidf_X = None
         self.lda = None
+        self.nlp = spacy.load('en_core_web_lg')
 
     def generate_word_cloud(self, source_file_dir, source_filename, saved_file_path, news_source=None,
                             start_date=None, end_date=None):
@@ -60,6 +63,45 @@ class DataAnalysis:
         plot.imshow(word_cloud)
         plot.axis('off')
         # plot.show()
+        word_cloud.to_file(saved_file_path)
+
+    def generate_word_cloud_of_sentiment(self, source_file_dir, source_filename, saved_file_path,
+                                         classification, more_stopwords=None, word_class='ADJ'):
+        df = self.excel_obj.read_excel(source_file_dir, source_filename)
+        if classification is not None:
+            df = df[df['立场'] == classification]
+        raw_docs = [content for content in df['语境']]
+        docs = []
+        for content in raw_docs:
+            doc = self.nlp(content)
+            doc_remain = []
+            for token in doc:
+                print(token.text + '-----' + token.pos_)
+                if token.pos_ == word_class:
+                    doc_remain.append(token.text)
+            docs.append(' '.join(doc_remain))
+        stopwords = []
+        stopwords.extend(TFIDF_STOPWORDS)
+        if more_stopwords is not None:
+            stopwords.extend(more_stopwords)
+        vectorizer = TfidfVectorizer(stop_words=stopwords)
+        vecs = vectorizer.fit_transform(docs)
+        feature_names = vectorizer.get_feature_names()
+        dense = vecs.todense()
+        lst1 = dense.tolist()
+        df_tfidf = pd.DataFrame(lst1, columns=feature_names)
+        # Generate word cloud
+        word_cloud = WordCloud(
+            width=3000,
+            height=2000,
+            random_state=1,
+            background_color="white",
+            # colormap="Pastel1",
+            collocations=False,
+            max_words=200,
+        ).generate_from_frequencies(df_tfidf.T.sum(axis=1))
+        plot.imshow(word_cloud)
+        plot.axis('off')
         word_cloud.to_file(saved_file_path)
 
     def generate_word_cloud_by_date(self, source_file_dir, source_filename, news_source=None):
@@ -324,19 +366,46 @@ class DataAnalysis:
             df.loc[idx, '主观性'] = result[1]
         df.to_excel(os.path.join(dest_file_dir, dest_filename), index=False)
 
-    def sentiment_analysis_by_textblob(self, source_file_dir, source_filename, dest_file_dir, dest_filename):
+    def sentiment_analysis_by_textblob(self, source_file_dir, source_filename, dest_file_dir, dest_filename, ignore=None):
         df = self.excel_obj.read_excel(source_file_dir, source_filename)
         df['极性'] = 0
         df['主观性'] = 0
         df['立场'] = ''
         for idx, row in df.iterrows():
             context = row['语境']
+            if ignore is not None:
+                for word in ignore:
+                    context = context.replace(word, '')
             result = TextBlob(context)
             df.loc[idx, '极性'] = result.sentiment.polarity
             df.loc[idx, '主观性'] = result.sentiment.subjectivity
-        df.loc[df['极性'] > 0, '立场'] = 'Positive'
-        df.loc[df['极性'] < 0, '立场'] = 'Negative'
-        df.loc[df['极性'] == 0, '立场'] = 'Neutral'
+        df.loc[df['极性'] > 0, '立场'] = '积极'
+        df.loc[df['极性'] < 0, '立场'] = '消极'
+        df.loc[df['极性'] == 0, '立场'] = '中立'
+        df.to_excel(os.path.join(dest_file_dir, dest_filename), index=False)
+
+    def sentiment_analysis_by_textblob_nba(self, source_file_dir, source_filename, dest_file_dir, dest_filename, ignore=None):
+        # anyway   try it!!!
+        # not suitable for us....it is based on movie reviews
+        df = self.excel_obj.read_excel(source_file_dir, source_filename)
+        df['p_pos'] = 0
+        df['p_neg'] = 0
+        df['立场'] = ''
+        df['分类'] = ''
+        for idx, row in df.iterrows():
+            print(idx)
+            context = row['语境']
+            if ignore is not None:
+                for word in ignore:
+                    context = context.replace(word, '')
+            result = TextBlob(context, analyzer=NaiveBayesAnalyzer())
+            classification = result.sentiment.classification
+            df.loc[idx, 'p_pos'] = result.sentiment.p_pos
+            df.loc[idx, 'p_neg'] = result.sentiment.p_neg
+            df.loc[idx, '分类'] = classification
+        # df.loc[df['极性'] > 0, '立场'] = '积极'
+        # df.loc[df['极性'] < 0, '立场'] = '消极'
+        # df.loc[df['极性'] == 0, '立场'] = '中立'
         df.to_excel(os.path.join(dest_file_dir, dest_filename), index=False)
 
     def plot_sentiment_result(self, source_file_dir, source_filename, dest_file_dir=None, dest_filename=None,
@@ -349,13 +418,70 @@ class DataAnalysis:
         plot.savefig(os.path.join(dest_file_dir, dest_filename))
 
 
+# word class: ADJ, NOUN, PROPN, ADV, VERB
+word_class = 'NOUN'
+DataAnalysis().generate_word_cloud_of_sentiment(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
+                                                'ceremony_2021-7-22_2021-7-24_textblob_sentiment.xlsx',
+                                                os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED,
+                                                             constant.DIR_WORDCLOUD, 'ceremony_'+word_class.lower()+'.png'),
+                                                None, more_stopwords=None, word_class=word_class)
+print("-----------------------------------------------")
+sentiment_wc_stopwords = ['japanese', 'australian', 'israeli', 'palestinian']
+# DataAnalysis().generate_word_cloud_of_sentiment(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
+#                                                 'ceremony_2021-7-22_2021-7-24_textblob_sentiment.xlsx',
+#                                                 os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED,
+#                                                              constant.DIR_WORDCLOUD, 'ceremony_pos.png'),
+#                                                 '积极', more_stopwords=sentiment_wc_stopwords)
+# print("-----------------------------------------------")
+# DataAnalysis().generate_word_cloud_of_sentiment(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
+#                                                 'ceremony_2021-7-22_2021-7-24_textblob_sentiment.xlsx',
+#                                                 os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED,
+#                                                              constant.DIR_WORDCLOUD, 'ceremony_neg.png'),
+#                                                 '消极', more_stopwords=sentiment_wc_stopwords)
+
+# sentiment_wc_stopwords.extend(['positive', 'new'])
+# DataAnalysis().generate_word_cloud_of_sentiment(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
+#                                                 'covid_case_2021-7-16_2021-7-21_textblob_sentiment.xlsx',
+#                                                 os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED,
+#                                                              constant.DIR_WORDCLOUD, 'covid_case_neg.png'),
+#                                                 '消极', more_stopwords=sentiment_wc_stopwords)
+# print("-----------------------------------------------")
+# DataAnalysis().generate_word_cloud_of_sentiment(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
+#                                                 'covid_case_2021-7-16_2021-7-21_textblob_sentiment.xlsx',
+#                                                 os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED,
+#                                                              constant.DIR_WORDCLOUD, 'covid_case_pos.png'),
+#                                                 '积极', more_stopwords=sentiment_wc_stopwords)
+# print("-----------------------------------------------")
+# DataAnalysis().generate_word_cloud_of_sentiment(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
+#                                                 'covid_positive_2021-7-16_2021-7-21_textblob_sentiment.xlsx',
+#                                                 os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED,
+#                                                              constant.DIR_WORDCLOUD, 'covid_positive_neg.png'),
+#                                                 '消极', more_stopwords=sentiment_wc_stopwords)
+# print("-----------------------------------------------")
+# DataAnalysis().generate_word_cloud_of_sentiment(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
+#                                                 'covid_positive_2021-7-16_2021-7-21_textblob_sentiment.xlsx',
+#                                                 os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED,
+#                                                              constant.DIR_WORDCLOUD, 'covid_positive_pos.png'),
+#                                                 '积极', more_stopwords=sentiment_wc_stopwords)
 # plot sentiment
-DataAnalysis().plot_sentiment_result(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
-                                     'covid_2021-7-16_2021-7-21_textblob_sentiment.xlsx',
-                                     os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
-                                     'covid_textblob_pie.png',
-                                     label='7月16日-20日三大媒体对新冠肺炎的情感态度'
-                                     )
+# DataAnalysis().plot_sentiment_result(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
+#                                      'covid_2021-7-16_2021-7-21_textblob_sentiment.xlsx',
+#                                      os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
+#                                      'covid_textblob_pie.png',
+#                                      label='7月16日-20日三大媒体对新冠肺炎的情感态度'
+#                                      )
+# DataAnalysis().plot_sentiment_result(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
+#                                      'covid_case_2021-7-16_2021-7-21_textblob_sentiment.xlsx',
+#                                      os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
+#                                      'covid_case_textblob_pie.png',
+#                                      label='7月16日-20日三大媒体对新冠肺炎案例的情感态度'
+#                                      )
+# DataAnalysis().plot_sentiment_result(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
+#                                      'covid_positive_2021-7-16_2021-7-21_textblob_sentiment.xlsx',
+#                                      os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
+#                                      'covid_positive_textblob_pie.png',
+#                                      label='7月16日-20日三大媒体对新冠肺炎阳性的情感态度'
+#                                      )
 # DataAnalysis().plot_sentiment_result(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
 #                                      'ceremony_2021-7-22_2021-7-24_textblob_sentiment.xlsx',
 #                                       os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
@@ -369,9 +495,29 @@ DataAnalysis().plot_sentiment_result(os.path.join(constant.ROOT_DIR, constant.DI
 #                                   'ceremony_2021-7-22_2021-7-24_sentiment.xlsx')
 
 # DataAnalysis().sentiment_analysis_by_textblob(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_CONTEXT),
+#                                   'ceremony_2021-7-22_2021-7-24.xlsx',
+#                                   os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
+#                                   'ceremony_2021-7-22_2021-7-24_textblob_sentiment.xlsx')
+
+# DataAnalysis().sentiment_analysis_by_textblob_nba(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_CONTEXT),
+#                                   'ceremony_2021-7-22_2021-7-24.xlsx',
+#                                   os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
+#                                   'ceremony_2021-7-22_2021-7-24_textblob_nba_sentiment.xlsx')
+
+# DataAnalysis().sentiment_analysis_by_textblob(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_CONTEXT),
 #                                   'covid_2021-7-16_2021-7-21.xlsx',
 #                                   os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
-#                                   'covid_2021-7-16_2021-7-21_textblob_sentiment.xlsx')
+#                                   'covid_2021-7-16_2021-7-21_textblob_sentiment.xlsx', ignore=['positive', 'new'])
+
+# DataAnalysis().sentiment_analysis_by_textblob(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_CONTEXT),
+#                                   'covid_case_2021-7-16_2021-7-21.xlsx',
+#                                   os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
+#                                   'covid_case_2021-7-16_2021-7-21_textblob_sentiment.xlsx', ignore=['positive', 'new'])
+#
+# DataAnalysis().sentiment_analysis_by_textblob(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_CONTEXT),
+#                                   'covid_positive_2021-7-16_2021-7-21.xlsx',
+#                                   os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_SENTIMENT),
+#                                   'covid_positive_2021-7-16_2021-7-21_textblob_sentiment.xlsx', ignore=['positive', 'new'])
 
 # DataAnalysis().get_news_count_by_date(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED),
 #                                   'news_token_lemma-0716-0808.xlsx')
@@ -388,6 +534,11 @@ DataAnalysis().plot_sentiment_result(os.path.join(constant.ROOT_DIR, constant.DI
 #                                 os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_CONTEXT), 1,
 #                                 news_source=None, allocation=None,
 #                                 start_date='2021-7-22 00:00:0', end_date='2021-7-24 00:00:0')
+# DataAnalysis().lines_of_keyword(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED),
+#                                 'news_token_lemma-0716-0808.xlsx', 'covid',
+#                                 os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED, constant.DIR_CONTEXT), 1,
+#                                 news_source=None, allocation=['positive'],
+#                                 start_date='2021-7-16 00:00:0', end_date='2021-7-21 00:00:0')
 # tf idf  && kmeans
 # dataAnalysis = DataAnalysis()
 # X, tfidf_df = dataAnalysis.tf_idf(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED),
