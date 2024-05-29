@@ -1,6 +1,6 @@
 import pandas as pd
 import db
-import datetime
+import constant
 import os
 from openpyxl import load_workbook
 
@@ -90,10 +90,26 @@ def reprocess_country_file():
     df.to_excel(os.path.join(DIR, new_file_name), index=False)
 
 
+DETAIL_HEADER = ['发布者', '检索关键词', '微博链接', '内容', '发布时间', '转发数', '回复数', '赞数']
+def detail_to_excel_by_username(db_obj):
+    df = pd.read_excel(os.path.join(constant.ROOT_DIR, constant.GOV_WEIBO_FILENAME))
+    for idx, row in df.iterrows():
+        username = row['name']
+        sql = 'select username, keyword, url, content, time, forward_count, reply_count, like_count ' \
+              'from weibo_detail where username="' + username + '" order by id asc'
+        result = db_obj.query_results(sql)
+        data = result['data']
+        if len(data) > 0:
+            df = pd.DataFrame(list(data), columns=DETAIL_HEADER)
+            df.to_excel(os.path.join(constant.ROOT_DIR, constant.ZHEJIANG_DIR, username + '-原始数据.xlsx'), index=False)
+
+
+
 # reprocess_country_file()
 
 db_obj = db.DB()
-get_data_from_db_by_date(db_obj, 2017, 3)
+# get_data_from_db_by_date(db_obj, 2017, 3)
 # get_data_by_filters(db_obj, QIYE, '企业', '企业')
-db_obj.close_conn()
+# db_obj.close_conn()
+detail_to_excel_by_username(db_obj)
 

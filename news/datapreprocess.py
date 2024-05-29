@@ -11,9 +11,9 @@ class DataPreprocess:
         self.excel_obj = Excel()
         self.nlp = spacy.load('en_core_web_lg')
         # add more stop words--------not working
-        STOP_WORDS.add('say')
-        STOP_WORDS.add('year')
-        STOP_WORDS.add('said')
+        # STOP_WORDS.add('say')
+        # STOP_WORDS.add('year')
+        # STOP_WORDS.add('said')
         self.pos_list = ['NOUN', 'PROPN', 'ADJ', 'VERB']
 
     # 1st step: remove null/empty content rows
@@ -67,26 +67,33 @@ class DataPreprocess:
         df.to_excel(os.path.join(dest_file_dir, dest_filename), index=False)
 
     def token_stopwords_lemma_spacy(self, source_file_dir, source_filename, dest_file_dir, dest_filename,
-                                    remove_punct=True):
+                                    remove_punct=True, remove_line_break=True, remove_stop=True,
+                                    source_col='内容', target_col=constant.NEW_COL_LEMMA_TEXT):
+        print('###token_stopwords_lemma_spacy')
         df = self.excel_obj.read_excel(source_file_dir, source_filename)
-        new_col = constant.NEW_COL_LEMMA_TEXT
+        new_col = target_col
         df[new_col] = ''
         for idx, row in df.iterrows():
             print('doc#####' + str(idx))
-            content = row['内容']
+            content = row[source_col]
             doc = self.nlp(content)
             doc_remain = []
             for token in doc:
-                if token.is_stop:
+                if remove_stop and token.is_stop:
                     continue
                 # 非stop words，
                 if remove_punct and token.is_punct:
                     continue
-                txt = token.lemma_.strip().lower()
+                txt = token.text
+                if not remove_line_break and token.text == '\n':
+                        txt = token.text
+                else:
+                    txt = token.lemma_.strip().lower()
                 # make sure the lemma is not a stop word
-                if txt not in STOP_WORDS:
-                    if txt != '':
-                        doc_remain.append(txt)
+                if remove_stop and txt in STOP_WORDS:
+                    txt = ''
+                if txt != '':
+                    doc_remain.append(txt)
             df.loc[idx, new_col] = ' '.join(doc_remain)
         df.to_excel(os.path.join(dest_file_dir, dest_filename), index=False)
 
@@ -218,7 +225,9 @@ class DataPreprocess:
             return sorted_in_pos
 
 
-DataPreprocess().token_stopwords_lemma_spacy(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED),
-                                             'news_token_lemma-0716-0808.xlsx',
-                                             os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED),
-                                             'news_token_lemma-0716-0808.xlsx', remove_punct=False)
+
+# if __name__ == "__main__":
+    # DataPreprocess().token_stopwords_lemma_spacy(os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED),
+    #                                              'news_token_lemma-0716-0808.xlsx',
+    #                                              os.path.join(constant.ROOT_DIR, constant.DIR_PROCESSED),
+    #                                              'news_token_lemma-0716-0808.xlsx', remove_punct=False)

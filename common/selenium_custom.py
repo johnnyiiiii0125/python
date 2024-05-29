@@ -9,6 +9,15 @@ def use_opened_chrome():
     return driver
 
 
+def use_opened_chrome_windows():
+    # cd 'C:/Program Files/Google/Chrome/Application'
+    # ./chrome.exe --remote-debugging-port=9527
+    options = webdriver.ChromeOptions()
+    options.add_experimental_option("debuggerAddress", "127.0.0.1:9527")
+    options.add_argument('--max-memory-percent=100')
+    driver = webdriver.Chrome(options=options)
+    return driver
+
 def safe_find_elm(elm, xpath,):
     try:
         found_elm = elm.find_element_by_xpath(xpath)
